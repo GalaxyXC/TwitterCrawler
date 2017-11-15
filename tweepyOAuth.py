@@ -3,10 +3,10 @@
 import tweepy #https://github.com/tweepy/tweepy
 import csv
 
-consumer_key = "EoV50LfF854f2DFPr6FGpQq26"
-consumer_secret = "J2rDWovgDHy7Xa4IlFJ0M8AGGzN4f8458V4yQnOE0GfVtrcFaV"
-access_key = "918550319726059526-9qFOpZBPDCn0xlV7fF0iEYj4uahdTCf"
-access_secret = "zsFhlIfkJsysXsLfJzBreerrOl9VFJ1Koyc3QuVnQaCQz"
+consumer_key = "SAHnTZbkW1B3gCR7l4hBPapVR"
+consumer_secret = "UMXUFeiYAddSQAFjPP10VX9eDb40QSSlVLAF1f6VFPz2G5oM3j"
+access_key = "918549121853779968-r0WlJS4XWhuHL9ReLLhcflFuMZQ7B4f"
+access_secret = "6eSW5CM8HSHTeRtAPHCSVziM3WbbjiRoz4vgFh8hFJ3kG"
 
 
 auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
