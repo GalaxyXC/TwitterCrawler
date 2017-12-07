@@ -30,7 +30,7 @@ from textblob import TextBlob
 # helper method: tokenizeTweets
 # @s: string
 # @return lst: parse and remove: links, foreign letters, '#' => make list of tokens => filter w/ stopwords
-def tokenizeTweets(s):
+def tokenizeTweets(s, stopWords):
     sentence = s[2:-1] # b'TWEET' -> TWEET
     linkPattern = re.compile('http[s]*://[\w.#&+=/]*')
     sentence = linkPattern.sub('', sentence)
@@ -39,22 +39,9 @@ def tokenizeTweets(s):
     foreign = re.compile(r'\\x\w\w')
     sentence = foreign.sub('', sentence)
 
-    # import stopwords and merge with customized stopwords and punctuation
-    try:
-        nltk.download('stopwords')
-        stop = set(stopwords.words('english'))
-    except LookupError:
-        print("Stop words importing failure. Select stopwords manually")
-        stop = []
-    finally:
-        # run finally block after custom_stopwords is updated
-        custom_stopwords = ['this', 'n', 'r', 'u', '2']
-        punctuation = ['!', ',', '', '.', '\\', '?', ':', '\"', '&', '-', '/', '', '(', ')', '\'', '$', '@']
-        stop = stop.union(custom_stopwords).union(punctuation)
-
     tknz = TweetTokenizer(reduce_len=True, strip_handles=True)  # reduce_len: shorten repeated char, handles = @XXXX
     tokens = tknz.tokenize(sentence)
-    lst = [word.lower() for word in tokens if (word.lower() not in stop)]
+    lst = [word.lower() for word in tokens if (word.lower() not in stopWords)]
     return lst
 
 # helper method: Token Frequencies Updater
@@ -68,6 +55,7 @@ def updateTokenFrequencies(tokens, dct):
 
 def dataPrep(Xfilename, Yfilename, Ydiff, wordDimension):
     # read input as raw for building X
+    print('Reading X from file:')
     raw = pd.read_csv(Xfilename)
 
     # matching date
@@ -117,41 +105,59 @@ def dataPrep(Xfilename, Yfilename, Ydiff, wordDimension):
     # progress message
     print('x1-x10 created.')
 
+    # import stopwords and merge with customized stopwords and punctuation
+    try:
+        nltk.download('stopwords')
+        stop = set(stopwords.words('english'))
+    except LookupError:
+        print("Stop words importing failure. Select stopwords manually")
+        stop = []
+    finally:
+        # run finally block after custom_stopwords is updated
+        custom_stopwords = ['this', 'n', 'r', 'u', '2']
+        punctuation = ['!', ',', '', '.', '\\', '?', ':', '\"', '&', '-', '/', '', '(', ')', '\'', '$', '@']
+        stop = stop.union(custom_stopwords).union(punctuation)
+
     # Tokenize all tweets into word~freq. tables:
-
-
+    print('Building token frequency table')
     tokenFreq = dict()
     for sentence in raw.content:
-        updateTokenFrequencies(tokenizeTweets(sentence), tokenFreq)
+        updateTokenFrequencies(tokenizeTweets(sentence, stop), tokenFreq)
 
     sortedTokenFreq = sorted(tokenFreq.items(), key=lambda x:x[1], reverse=True)
 
-    # update x10 - x210
+    # update x11 - x..
+    raw = raw.drop(['tweetId', 'time', 'id'], axis=1)
+    print('Updating x11 - x' + str(wordDimension + 10))
     for iColumn in range(wordDimension):
         if iColumn % 10 == 0:
             print('Processing',iColumn+10,'-th column.')
         token = (sortedTokenFreq[iColumn][0]) # i-th most frequent token
-        col = raw.content.apply(lambda x:(1 if token in tokenizeTweets(x) else 0))
+        col = raw.content.apply(lambda x:(1 if token in tokenizeTweets(x, stopWords=stop) else 0))
         raw.insert(raw.shape[1], iColumn, col)
 
     # Split-Apply(sum)-Combine
+    print('S.A.C.')
     grouped = raw.groupby('date')
-    X = grouped.sum() # 'time', 'content', 'id' attributes were dropped as they cannot sum. 'date' become INDEX of X
-    col = pd.to_datetime(X.index, format = '%m/%d/%Y')
+    X = grouped.sum() # 'content' were dropped as they cannot sum. 'date' become INDEX of X
+    col = pd.to_datetime(X.index, format = '%Y-%m-%d')
     X.insert(0, 'date', col)
-    X = X.drop(['tweetId'], axis=1)
 
     # fix x5 DoY and x8 Year
     X['x5'] = X.date.dt.dayofyear
     X['x8'] = X.date.dt.year
 
+    # fixing col and row names
+    X.index.name = 'row'
     XColumnNames = ['date']
     for i in range(wordDimension+10):
-        XColumnNames.append('x'+str(i))
+        XColumnNames.append('x'+str(i+1))
     X.columns = XColumnNames
-    X.index.name = 'row'
+
+    data = X
 
     # read Y variables
+    print('Reading Y from file:')
     Y = pd.read_csv(Yfilename)
     Y['Date'] = pd.to_datetime(Y.Date, format='%m/%d/%Y')
 
@@ -169,22 +175,35 @@ def dataPrep(Xfilename, Yfilename, Ydiff, wordDimension):
     fullDates.columns = ['date']
     Y = pd.merge(fullDates, Y, how='left', on=['date'])
 
+    print('Interpolating SP500 NaN values, total lines:', Y.shape[0])
     for i in range(2, Y.shape[0]-2):
+        if i % 500 == 0:
+            print('Processing', i, '-th row.')
         if math.isnan(Y.sp500index[i]):
-            Y.sp500index[i] = Y.sp500index[i-2] + Y.sp500index[i+2]
+            try:
+                Y.sp500index[i] = Y.sp500index[i-2] + Y.sp500index[i+2]
+            except:
+                continue
 
-    if Ydiff == 0:
-        pass
-    else:
-        Y = pd.concat([Y.date[:-Ydiff], Y.sp500index[Ydiff:].reset_index()], axis=1, ignore_index=True, join='inner')
+    # setting day difference between X('s date) and Y
+    print('setting prediction interval = Day Diff')
+    for d in Ydiff:
+        Y = pd.concat([Y.date[:-d], Y.sp500index[d:].reset_index()], axis=1, ignore_index=True, join='inner')
+        Y.columns = ['date', '_', ('Y'+str(d))]
 
-    # merge X and Y = data
-    data = pd.merge(X, Y, how='left', on=['date'])
+        # merge X and Y = data
+        print('matching X and Y', d, ' using date')
+        data = pd.merge(data, Y, how='left', on=['date'])
 
     return(data)
 
-
-
 if __name__ == '__main__':
-    out = dataPrep(Xfilename="alltweets.csv", Yfilename="sp500index.csv", Ydiff=0, wordDimension=100)
-    out.to_csv('X.csv', 'w')
+
+    DayDiff = [1, 7, 15, 30, 60, 90, 180, 360]
+
+    out = dataPrep(Xfilename='alltweets.csv',
+                   Yfilename="sp500index.csv",
+                   Ydiff=DayDiff,
+                   wordDimension=100)
+
+    out.to_csv('data.csv')
